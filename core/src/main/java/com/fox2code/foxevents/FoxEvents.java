@@ -138,6 +138,7 @@ public abstract class FoxEvents {
      *
      * @param eventCallback event callback to register
      * @return if the event callback was added
+     * @since 1.0.0
      */
     protected final boolean registerEventCallback(@NotNull EventCallback eventCallback) {
         this.ensureInstanceAccess();
@@ -145,9 +146,36 @@ public abstract class FoxEvents {
     }
 
     /**
+     * Allow to add event callback to various event holders
+     *
+     * @param eventCallback event callback to register
+     * @return if the event callback was added
+     * @since 1.1.0
+     */
+    protected final boolean unregisterEventCallback(@NotNull EventCallback eventCallback) {
+        this.ensureInstanceAccess();
+        return eventCallback.eventHolder.unregisterEventCallback(eventCallback);
+    }
+
+    /**
+     * Unregister event handlers that are owned by the instance
+     *
+     * @param instance to set as the default implementation.
+     * @since 1.1.0
+     */
+    protected final boolean unregisterEventsForClassLoader(@Nullable ClassLoader classLoader, @NotNull Object instance) {
+        this.ensureInstanceAccess();
+        final boolean[] ret = new boolean[]{false};
+        EventHolder.forEachEventHolder(classLoader,
+                holder -> ret[0] |= holder.unregisterEventCallbackFromInstance(instance));
+        return ret[0];
+    }
+
+    /**
      * Method used to register event handles from an instance
      *
      * @param handler event handler to register
+     * @since 1.0.0
      */
     public abstract void registerEvents(@NotNull Object handler);
 
@@ -156,8 +184,17 @@ public abstract class FoxEvents {
      *
      * @param handler event handler to register
      * @param validator used to detect when handlers should be invalid
+     * @since 1.0.0
      */
     public abstract void registerEvents(@NotNull Object handler,@Nullable BooleanSupplier validator);
+
+    /**
+     * Method used to unregister event handles from an instance
+     *
+     * @param handler event handler to unregister
+     * @since 1.1.0
+     */
+    public abstract void unregisterEvents(@NotNull Object handler);
 
     /**
      * Callback called when an event fails to dispatch
@@ -192,6 +229,8 @@ public abstract class FoxEvents {
      * Can be implemented by subclass loader of the classloader that implemented FoxEvent to avoid memory leaks.
      * <p>
      * The class loader that defined FoxEvent doesn't need to implement this class itself.
+     *
+     * @since 1.0.0
      */
     public interface FoxEventsClassLoader {
         /**
@@ -222,6 +261,15 @@ public abstract class FoxEvents {
                 this.registerEventCallback(eventCallback);
             }
         }
+
+        @Override
+        public void unregisterEvents(@NotNull Object handler) {
+            if (handler.getClass().getClassLoader() != FoxEvents.class.getClassLoader()) {
+                // Cross class loader unregister is a bit iffy, but implementation can always be overridden.
+                throw new IllegalArgumentException("Handler doesn't use same class loader as FoxEvents");
+            }
+            this.unregisterEventsForClassLoader(FoxEvents.class.getClassLoader(), handler);
+        }
     }
 
     /**
@@ -243,7 +291,7 @@ public abstract class FoxEvents {
          * @since 1.0.0
          */
         public static void giveInstanceAccessUnsafe(@NotNull FoxEvents foxEvents) {
-            getFoxEvents().onUnsafeAccess("giveInstanceAccessUnsafe");
+            getFoxEventsSoft().onUnsafeAccess("giveInstanceAccessUnsafe");
             foxEvents.unsafeAccess = true;
         }
 
@@ -266,7 +314,7 @@ public abstract class FoxEvents {
          * @since 1.0.0
          */
         public static void setCancelledUnsafe(@NotNull Event event, boolean cancelled) {
-            getFoxEvents().onUnsafeAccess("setCancelledUnsafe");
+            getFoxEventsSoft().onUnsafeAccess("setCancelledUnsafe");
             event.cancelled = cancelled;
         }
 
@@ -285,6 +333,21 @@ public abstract class FoxEvents {
                 return ((FoxEventsClassLoader) classLoader).getFoxEventHolderReferences();
             }
             return EventHolder.eventHoldersCache.get(classLoader);
+        }
+
+        /**
+         * Unregister event handlers that are owned by the instance
+         *
+         * @param instance to unregister events from.
+         * @since 1.1.0
+         */
+        public static boolean unregisterEventsForClassLoaderUnsafe(
+                @Nullable ClassLoader classLoader, @NotNull Object instance) {
+            getFoxEvents().onUnsafeAccess("unregisterEventsUnsafe");
+            final boolean[] ret = new boolean[]{false};
+            EventHolder.forEachEventHolder(classLoader,
+                    holder -> ret[0] |= holder.unregisterEventCallbackFromInstance(instance));
+            return ret[0];
         }
     }
 }

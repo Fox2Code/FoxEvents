@@ -7,7 +7,7 @@ import org.jetbrains.annotations.Nullable;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Modifier;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -19,8 +19,8 @@ public final class EventHolder<T extends Event> {
     private static final Predicate<EventCallback> pInvalid = EventCallback::isInvalid;
     private static final Predicate<EventCallback> pIgnoreCancelled = p -> p.ignoreCancelled;
     private static final EventCallback[] EMPTY_EVENT_CALLBACKS = new EventCallback[0];
-    static final WeakHashMap<ClassLoader, IdentityHashMap<Class<? extends Event>, EventHolder<?>>>
-            eventHoldersCache = new WeakHashMap<>();
+    static final IdentityHashMap<ClassLoader, IdentityHashMap<Class<? extends Event>, EventHolder<?>>>
+            eventHoldersCache = new IdentityHashMap<>();
     private static final Function<ClassLoader, IdentityHashMap<Class<? extends Event>, EventHolder<?>>>
             eventHoldersClassLoaderMapProvider = classLoader -> new IdentityHashMap<>();
     private static final Function<Class<? extends Event>, EventHolder<?>>
@@ -82,6 +82,35 @@ public final class EventHolder<T extends Event> {
                 .computeIfAbsent(eventClass, eventHolderProvider);
     }
 
+    /**
+     * Allow to execute action for each registered event handler on the default class loader
+     *
+     * @param action The action to be performed for each entry
+     * @since 1.1.0
+     */
+    public static void forEachEventHolder(@NotNull Consumer<EventHolder<?>> action) {
+        forEachEventHolder(null, action);
+    }
+
+    /**
+     * Allow to execute action for each registered event handler on the selected class loader
+     *
+     * @param classLoader The class loader to list event holders off, if null, use default class loader
+     * @param action The action to be performed for each entry
+     * @since 1.1.0
+     */
+    public static void forEachEventHolder(@Nullable ClassLoader classLoader,@NotNull Consumer<EventHolder<?>> action) {
+        IdentityHashMap<Class<? extends Event>, EventHolder<?>> localEventHoldersCache;
+        if (classLoader == null) classLoader = EventHolder.class.getClassLoader();
+        if (classLoader instanceof FoxEvents.FoxEventsClassLoader) {
+            localEventHoldersCache = ((FoxEvents.FoxEventsClassLoader) classLoader).getFoxEventHolderReferences();
+        } else {
+            localEventHoldersCache = eventHoldersCache.get(classLoader);
+        }
+        if (localEventHoldersCache == null) return;
+        localEventHoldersCache.values().forEach(action);
+    }
+
     private final ArrayList<EventCallback> eventCallbacks = new ArrayList<>();
     private EventCallback[] bakedCallbacks = EMPTY_EVENT_CALLBACKS;
     private boolean bakedCallbacksSkipOnCancelled = false;
@@ -100,6 +129,8 @@ public final class EventHolder<T extends Event> {
         this.eventModifiers = event.getModifiers();
         boolean cancellable = Event.Cancellable.class.isAssignableFrom(event);
         boolean delegate = event.getDeclaredAnnotation(Event.DelegateEvent.class) != null;
+        if (delegate && event.getClassLoader() != event.getSuperclass().getClassLoader()) // Avoid memory-leaks
+            throw new IllegalStateException("Delegate have a super class with a different class loader than it's on");
         this.delegate = delegate ? (EventHolder<? super T>) getHolderFromEventRaw(event.getSuperclass()) : null;
         if (this.delegate != null) this.delegate.getDelegatedChilds().put(this, null);
         this.cancellable = cancellable;
@@ -200,9 +231,10 @@ public final class EventHolder<T extends Event> {
         EventCallback[] bakedCallbacks;
         synchronized (this.eventCallbacks) {
             bakedCallbacks = this.bakedCallbacks;
+            int validationModCountCache = validationModCount;
             if (bakedCallbacks == null ||
-                    this.validationCount != validationModCount) {
-                this.validationCount = validationModCount;
+                    this.validationCount != validationModCountCache) {
+                this.validationCount = validationModCountCache;
                 ArrayList<EventCallback> eventCallbacks;
                 if (this.delegate == null) {
                     this.eventCallbacks.removeIf(pInvalid);
@@ -243,10 +275,6 @@ public final class EventHolder<T extends Event> {
             // We should never reach this code, but just in case.
             throw new IllegalArgumentException("EventCallback.eventHolder != this");
         }
-        return this.registerEventCallbackRaw(eventCallback);
-    }
-
-    private boolean registerEventCallbackRaw(EventCallback eventCallback) {
         boolean added = false;
         synchronized (this.eventCallbacks) {
             if (!this.eventCallbacks.contains(eventCallback)) {
@@ -258,6 +286,34 @@ public final class EventHolder<T extends Event> {
             this.markChildsDirty();
         }
         return added;
+    }
+
+    boolean unregisterEventCallback(EventCallback eventCallback) {
+        if (eventCallback.eventHolder != this) {
+            // We should never reach this code, but just in case.
+            throw new IllegalArgumentException("EventCallback.eventHolder != this");
+        }
+        boolean removed = false;
+        synchronized (this.eventCallbacks) {
+            if (!this.eventCallbacks.contains(eventCallback)) {
+                removed = this.eventCallbacks.remove(eventCallback);
+                this.bakedCallbacks = null;
+            }
+        }
+        if (this.delegatedChilds != null && removed) {
+            this.markChildsDirty();
+        }
+        return removed;
+    }
+
+    boolean unregisterEventCallbackFromInstance(final Object instance) {
+        if (instance == null) return false;
+        boolean unregistered = this.eventCallbacks.removeIf(
+                eventCallback -> eventCallback.holder == instance);
+        if (unregistered) {
+            this.markChildsDirty();
+        }
+        return unregistered;
     }
 
     private WeakHashMap<EventHolder<?>, Void> getDelegatedChilds() {

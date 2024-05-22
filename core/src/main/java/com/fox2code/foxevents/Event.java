@@ -15,6 +15,7 @@ public abstract class Event {
     private EventHolder<?> initializingHolder;
     /**
      * Tell if event is cancelled, this is only for use by the instantiated event itself
+     *
      * @see #isCancelled()
      * @see #setCancelled(boolean)
      * @since 1.0.0
@@ -26,6 +27,7 @@ public abstract class Event {
     /**
      * A hook to allow to provide an event holder in a more efficient way, if the returned
      * result is {@code null} or does not match the event, it will be safely ignored.
+     *
      * @return the event holder matching this event
      * @since 1.0.0
      */
@@ -76,6 +78,7 @@ public abstract class Event {
 
     /**
      * Called when an event has finished to be processed, used to reset event status if needed
+     *
      * @since 1.0.0
      */
     protected void cleanUp() {
@@ -84,6 +87,7 @@ public abstract class Event {
 
     /**
      * Mark the event as cancellable
+     *
      * @since 1.0.0
      */
     public interface Cancellable {
@@ -96,6 +100,7 @@ public abstract class Event {
 
     /**
      * When used, tell FoxEvents to also use parent listeners for the event.
+     *
      * @since 1.0.0
      */
     @Retention(RetentionPolicy.RUNTIME)

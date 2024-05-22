@@ -40,6 +40,7 @@ public class TestEvents {
 
     boolean basic, delegate, secondary, cancellable, cancellableIgnoreCancelled;
     boolean shouldCancelCancellable, isCancellableCancelled;
+    int basicCallCount;
 
     public void reset() {
         if (BASIC_EVENT_HOLDER.isEmpty()) {
@@ -52,11 +53,12 @@ public class TestEvents {
         this.cancellableIgnoreCancelled = false;
         this.shouldCancelCancellable = false;
         this.isCancellableCancelled = false;
+        this.basicCallCount = 0;
     }
 
     public void assertState(boolean basic,boolean delegate, boolean singleton,boolean cancellableSingleton,
                             boolean cancellableSingletonIC, boolean shouldCancelCancellable,
-                            boolean isSingletonCancelled) {
+                            boolean isSingletonCancelled, int basicCallCount) {
         Assertions.assertEquals(basic, this.basic, "this.basic != basic");
         Assertions.assertEquals(delegate, this.delegate, "this.delegate != delegate");
         Assertions.assertEquals(singleton, this.secondary, "this.singleton != singleton");
@@ -68,6 +70,8 @@ public class TestEvents {
                 "this.shouldCancelCancellable != shouldCancelCancellable");
         Assertions.assertEquals(isSingletonCancelled, this.isCancellableCancelled,
                 "this.isSingletonCancelled != isSingletonCancelled");
+        Assertions.assertEquals(basicCallCount, this.basicCallCount,
+                "this.basicCallCount != basicCallCount");
     }
 
     @Test
@@ -79,49 +83,61 @@ public class TestEvents {
     public synchronized void testBasicEvent() {
         this.reset();
         basicStatic = false;
-        new BasicEvent().callEvent();
-        this.assertState(true, false, false, false, false, false, false);
+        BasicEvent basicEvent = new BasicEvent();
+        basicEvent.callEvent();
+        this.assertState(true, false, false, false, false, false, false, 1);
         Assertions.assertTrue(basicStatic);
         this.reset();
-        new BasicEvent().callEvent();
-        this.assertState(true, false, false, false, false, false, false);
+        basicEvent.callEvent();
+        this.assertState(true, false, false, false, false, false, false, 1);
+        basicEvent.callEvent();
+        this.assertState(true, false, false, false, false, false, false, 2);
     }
 
     @Test
     public synchronized void testBasicDelegateEvent() {
         this.reset();
         new BasicDelegateEvent().callEvent();
-        this.assertState(true, true, false, false, false, false, false);
+        this.assertState(true, true, false, false, false, false, false, 1);
     }
 
     @Test
     public synchronized void testBasicSingletonEvent() {
         this.reset();
         new BasicSecondaryEvent().callEvent();
-        this.assertState(false, false, true, false, false, false, false);
+        this.assertState(false, false, true, false, false, false, false, 0);
     }
 
     @Test
     public synchronized void testCancellableSingletonEvent() {
         this.reset();
         new CancellableEvent().callEvent();
-        this.assertState(false, false, false, true, true, false, false);
+        this.assertState(false, false, false, true, true, false, false, 0);
         this.reset();
         this.shouldCancelCancellable = true;
         new CancellableEvent().callEvent();
-        this.assertState(false, false, false, true, true, true, true);
+        this.assertState(false, false, false, true, true, true, true, 0);
         this.reset();
         CancellableEvent event =
                 new CancellableEvent();
         event.setCancelled(true);
         event.callEvent();
 
-        this.assertState(false, false, false, false, true, false, true);
+        this.assertState(false, false, false, false, true, false, true, 0);
+    }
+
+    @Test
+    public synchronized void testEventHolderForEach() {
+        final int[] counter = new int[]{0};
+        EventHolder.forEachEventHolder(eventHolder -> counter[0]++);
+        // This is good enough for now
+        Assertions.assertEquals(4, counter[0]);
     }
 
     @EventHandler
     public void onBasicEvent(BasicEvent basicEvent) {
         this.basic = true;
+        this.basicCallCount++;
     }
 
     @EventHandler
