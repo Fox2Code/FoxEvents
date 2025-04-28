@@ -27,6 +27,9 @@ public final class EventHolder<T extends Event> {
             eventHolderProvider = EventHolder::new;
     private static final boolean ignoreMemoryLeaks = Boolean.getBoolean("foxevents.ignore-memory-leaks");
     private static final HashSet<String> printedClassLoaderMemoryLeakIssues = new HashSet<>();
+    private static final ClassLoader selfClassLoader = EventHolder.class.getClassLoader();
+    private static final IdentityHashMap<Class<? extends Event>, EventHolder<?>>
+            selfClassLoaderMap = new IdentityHashMap<>();
     private static volatile boolean fullWarn = true;
     static int validationModCount = 0;
 
@@ -56,6 +59,11 @@ public final class EventHolder<T extends Event> {
         Class<? extends Event> eventClass = event.asSubclass(Event.class);
         ClassLoader classLoader = eventClass.getClassLoader();
         assert classLoader != null;
+        // The "==" operator is lighting fast, and the ClassLoader loading FoxEvents
+        // being the same as the classLoader of events should be the most common case
+        if (classLoader == selfClassLoader) {
+            return selfClassLoaderMap.computeIfAbsent(eventClass, eventHolderProvider);
+        }
         if (classLoader instanceof FoxEvents.FoxEventsClassLoader) {
             FoxEvents.FoxEventsClassLoader foxEventsClassLoader =
                     (FoxEvents.FoxEventsClassLoader) classLoader;
@@ -64,8 +72,7 @@ public final class EventHolder<T extends Event> {
         }
         // Warn about memory leak we can't solve properly alone.
         String classLoaderName = classLoader.getClass().getName();
-        if (classLoader != EventHolder.class.getClassLoader() &&
-                classLoader != ClassLoader.getSystemClassLoader() &&
+        if (classLoader != ClassLoader.getSystemClassLoader() &&
                 classLoader != FoxEvents.getFoxEventsSoft().getClass().getClassLoader() &&
                 printedClassLoaderMemoryLeakIssues.add(classLoaderName) && !ignoreMemoryLeaks) {
             FoxEvents.LOGGER.warning("Possible memory-leak while registering " + event.getName() +
@@ -74,7 +81,7 @@ public final class EventHolder<T extends Event> {
                 fullWarn = false;
                 FoxEvents.LOGGER.warning("To fix the issue, implement " +
                         "the FoxEventClassLoader interface on " + classLoaderName);
-                FoxEvents.LOGGER.warning("If you do not unload that ClassLoaders " +
+                FoxEvents.LOGGER.warning("If you do not unload that ClassLoader " +
                         "during your app lifecycle, you can safely ignore this message");
             }
         }
@@ -223,15 +230,19 @@ public final class EventHolder<T extends Event> {
     public void ensureBaked() {
         if (this.bakedCallbacks == null ||
                 this.validationCount != validationModCount) {
-            this.callEventRaw(null);
+            this.aquireBackedCallbacks();
         }
     }
 
-    void callEventRaw(Event event) {
+    EventCallback[] aquireBackedCallbacks() {
         EventCallback[] bakedCallbacks;
+        int validationModCountCache = validationModCount;
+        if (this.validationCount == validationModCountCache &&
+                (bakedCallbacks = this.bakedCallbacks) != null) {
+            return bakedCallbacks;
+        }
         synchronized (this.eventCallbacks) {
             bakedCallbacks = this.bakedCallbacks;
-            int validationModCountCache = validationModCount;
             if (bakedCallbacks == null ||
                     this.validationCount != validationModCountCache) {
                 this.validationCount = validationModCountCache;
@@ -250,18 +261,30 @@ public final class EventHolder<T extends Event> {
                         eventCallbacks.stream().noneMatch(pIgnoreCancelled);
             }
         }
-        if (event == null) return;
+        return bakedCallbacks;
+    }
+
+    void callEventRaw(@NotNull Event event) {
+        EventCallback[] bakedCallbacks = this.aquireBackedCallbacks();
         if (this.bakedCallbacksSkipOnCancelled) {
             for (EventCallback eventCallback : bakedCallbacks) {
                 if (event.cancelled) return;
-                eventCallback.callForEvent(event);
+                eventCallback.callForEventRaw(event);
             }
         } else {
             for (EventCallback eventCallback : bakedCallbacks) {
                 if (event.cancelled && !eventCallback.ignoreCancelled) continue;
-                eventCallback.callForEvent(event);
+                eventCallback.callForEventRaw(event);
             }
         }
+    }
+
+    boolean isEventCallbackRegistered(EventCallback eventCallback) {
+        boolean isRegistered;
+        synchronized (this.eventCallbacks) {
+            isRegistered = this.eventCallbacks.contains(eventCallback);
+        }
+        return isRegistered;
     }
 
     boolean registerEventCallback(EventCallback eventCallback) {
@@ -308,8 +331,11 @@ public final class EventHolder<T extends Event> {
 
     boolean unregisterEventCallbackFromInstance(final Object instance) {
         if (instance == null) return false;
-        boolean unregistered = this.eventCallbacks.removeIf(
-                eventCallback -> eventCallback.holder == instance);
+        boolean unregistered;
+        synchronized (this.eventCallbacks) {
+            unregistered = this.eventCallbacks.removeIf(
+                    eventCallback -> eventCallback.holder == instance);
+        }
         if (unregistered) {
             this.markChildsDirty();
         }

@@ -16,7 +16,7 @@ import java.util.function.BooleanSupplier;
 import java.util.logging.Logger;
 
 /**
- * FoxEvent implementation, extend this class to change or modify default behaviour.
+ * FoxEvent implementation, extend this class and call {@link #setFoxEvents(FoxEvents)} to customize default behaviour.
  *
  * @since 1.0.0
  */
@@ -28,6 +28,7 @@ public abstract class FoxEvents {
 
     /**
      * Default constructor for FoxEvents implementation
+     * @since 1.0.0
      */
     public FoxEvents() {}
 
@@ -35,6 +36,7 @@ public abstract class FoxEvents {
      * Used to set the FoxEvents backing implementation.
      *
      * @param foxEvents instance
+     * @since 1.0.0
      */
     public static void setFoxEvents(@NotNull FoxEvents foxEvents) {
         Objects.requireNonNull(foxEvents, "FoxEvents implementation cannot be null.");
@@ -93,26 +95,93 @@ public abstract class FoxEvents {
         EventHolder.validationModCount++;
     }
 
+    /**
+     * @param eventHolder the event holder
+     * @param holder the instance holder
+     * @param eventCallback the event callback
+     * @param ignoreCancelled if the handler should be called even if the event is cancelled
+     * @param priority the priority of the event
+     * @param validator the validator of the event
+     * @return the new {@link EventCallback}
+     */
     @Contract(pure = true)
     protected final @NotNull EventCallback makeEventCallback(
             @NotNull EventHolder<?> eventHolder,@Nullable Object holder,@NotNull MethodHandle eventCallback,
             boolean ignoreCancelled, int priority,@Nullable BooleanSupplier validator) {
         this.ensureInstanceAccess();
+        Objects.requireNonNull(eventHolder, "eventHolder == null");
+        Objects.requireNonNull(eventCallback, "eventCallback == null");
+        if (holder != null) {
+            // Ensure ABI compat with 1.1.0
+            eventCallback = eventCallback.bindTo(holder);
+        }
         return new EventCallback(eventHolder, holder, eventCallback,
                 ignoreCancelled, priority, validator);
     }
 
+    /**
+     * Used to get the EventCallbacks of an event handler.
+     * @param instance the instance to get the event callbacks of
+     * @return an {@link ArrayList} of all registered event callbacks
+     * @throws EventRegistrationException if we failed to acquire all event callbacks
+     * @since 1.0.0
+     */
     @Contract(pure = true)
-    protected final ArrayList<EventCallback> getEventCallbacks(@NotNull Object instance) {
-        return this.getEventCallbacks(instance, null);
+    protected final ArrayList<EventCallback> getEventCallbacks(
+            @NotNull Object instance) throws EventRegistrationException {
+        return this.getEventCallbacks(instance, null, false, null);
     }
 
+    /**
+     * Used to get the EventCallbacks of an event handler.
+     * @param instance the instance to get the event callbacks of
+     * @param validator the validator, or null if the result is always {@code true}.
+     * @return an {@link ArrayList} of all registered event callbacks
+     * @throws EventRegistrationException if we failed to acquire all event callbacks
+     * @since 1.0.0
+     */
     @Contract(pure = true)
     protected final @NotNull ArrayList<EventCallback> getEventCallbacks(
-            @NotNull Object instance,@Nullable BooleanSupplier validator) {
+            @NotNull Object instance,@Nullable BooleanSupplier validator) throws EventRegistrationException {
+        return this.getEventCallbacks(instance, validator, false, null);
+    }
+
+    /**
+     * Used to get the EventCallbacks of an event handler.
+     * @param instance the instance to get the event callbacks of
+     * @param validator the validator, or null if the result is always {@code true}.
+     * @param ignoreInvalid should it skip invalid event callback instead of throwing {@link EventRegistrationException}.
+     * @return an {@link ArrayList} of all registered event callbacks
+     * @throws EventRegistrationException if we failed to acquire all event callbacks
+     * @since 1.2.0
+     */
+    @Contract(pure = true)
+    protected final @NotNull ArrayList<EventCallback> getEventCallbacks(
+            @NotNull Object instance,@Nullable BooleanSupplier validator,
+            boolean ignoreInvalid) throws EventRegistrationException {
+        return this.getEventCallbacks(instance, validator, ignoreInvalid, null);
+    }
+
+    /**
+     * Used to get the EventCallbacks of an event handler.
+     * @param instance the instance to get the event callbacks of
+     * @param validator the validator, or null if the result is always {@code true}.
+     * @param ignoreInvalid should it skip invalid event callback instead of throwing {@link EventRegistrationException}.
+     * @param lookup the lookup used to resolve methods
+     * @return an {@link ArrayList} of all registered event callbacks
+     * @throws EventRegistrationException if we failed to acquire all event callbacks
+     * @since 1.2.0
+     */
+    @Contract(pure = true)
+    protected final @NotNull ArrayList<EventCallback> getEventCallbacks(
+            @NotNull Object instance, @Nullable BooleanSupplier validator,
+            boolean ignoreInvalid, @Nullable MethodHandles.Lookup lookup) throws EventRegistrationException {
         ArrayList<EventCallback> eventCallbacks = new ArrayList<>();
         boolean isStatic = instance instanceof Class;
         Class<?> handlerClass = isStatic ? (Class<?>) instance : instance.getClass();
+        if (lookup == null) {
+            lookup = MethodHandles.publicLookup();
+        }
         for (Method method : handlerClass.getMethods()) {
             if (method.isBridge() || method.isSynthetic() ||
                     Modifier.isStatic(method.getModifiers()) != isStatic) continue;
@@ -123,9 +192,13 @@ public abstract class FoxEvents {
             EventHolder<?> eventHolder = EventHolder.getHolderFromEventRaw(args[0]);
             MethodHandle methodHandle;
             try {
-                methodHandle = MethodHandles.lookup().unreflect(method);
+                methodHandle = lookup.unreflect(method);
+                if (!isStatic) {
+                    methodHandle = methodHandle.bindTo(instance);
+                }
             } catch (IllegalAccessException e) {
-                throw new RuntimeException("Failed to un-reflect method " + method.getName(), e);
+                if (ignoreInvalid) continue;
+                throw new EventRegistrationException("Failed to un-reflect method " + method.getName(), e);
             }
             eventCallbacks.add(new EventCallback(eventHolder, isStatic ? null : instance, methodHandle,
                     eventHandler.ignoreCancelled(), eventHandler.priority(), validator));
@@ -160,7 +233,9 @@ public abstract class FoxEvents {
     /**
      * Unregister event handlers that are owned by the instance
      *
-     * @param instance to set as the default implementation.
+     * @param classLoader to unregister events from.
+     * @param instance to unregister events from.
+     * @return if any event has been unregistered
      * @since 1.1.0
      */
     protected final boolean unregisterEventsForClassLoader(@Nullable ClassLoader classLoader, @NotNull Object instance) {
@@ -175,18 +250,20 @@ public abstract class FoxEvents {
      * Method used to register event handles from an instance
      *
      * @param handler event handler to register
+     * @throws EventRegistrationException if failed to register the handler.
      * @since 1.0.0
      */
-    public abstract void registerEvents(@NotNull Object handler);
+    public abstract void registerEvents(@NotNull Object handler) throws EventRegistrationException;
 
     /**
      * Method used to register event handles from an instance
      *
      * @param handler event handler to register
      * @param validator used to detect when handlers should be invalid
+     * @throws EventRegistrationException if failed to register the handler
      * @since 1.0.0
      */
-    public abstract void registerEvents(@NotNull Object handler,@Nullable BooleanSupplier validator);
+    public abstract void registerEvents(@NotNull Object handler,@Nullable BooleanSupplier validator) throws EventRegistrationException;
 
     /**
      * Method used to unregister event handles from an instance
@@ -212,15 +289,23 @@ public abstract class FoxEvents {
      * Callback called when unsafe APIs are called, can be used to limit the usage of the {@link Unsafe} API
      *
      * @param method name of used unsafe method
+     * @throws SecurityException if operation is not permitted
      * @since 1.0.0
      */
-    protected void onUnsafeAccess(String method) {}
+    protected void onUnsafeAccess(String method) throws SecurityException {}
 
     @SuppressWarnings("unchecked")
     private static <T extends Throwable> void sneakyThrow(Throwable throwable) throws T {
         throw (T) throwable;
     }
 
+    /**
+     * @param o1 the first event callback to be compared.
+     * @param o2 the second event callback to be compared.
+     * @return a negative integer, zero, or a positive integer as
+     *   the first event callback should be run after, in any order, or before the second event callback.
+     * @since 1.0.0
+     */
     public int compare(@NotNull EventCallback o1,@NotNull EventCallback o2) {
         return Integer.compare(o2.priority, o1.priority);
     }
@@ -243,20 +328,25 @@ public abstract class FoxEvents {
         IdentityHashMap<Class<? extends Event>, EventHolder<?>> getFoxEventHolderReferences();
     }
 
+    /**
+     * Default implementation of {@link FoxEvents}
+     * @since 1.0.0
+     */
     static final class FoxEventsImpl extends FoxEvents {
         static final FoxEventsImpl INSTANCE = new FoxEventsImpl();
 
         private FoxEventsImpl() {}
 
         @Override
-        public void registerEvents(@NotNull Object handler) {
+        public void registerEvents(@NotNull Object handler) throws EventRegistrationException {
             for (EventCallback eventCallback : this.getEventCallbacks(handler)) {
                 this.registerEventCallback(eventCallback);
             }
         }
 
         @Override
-        public void registerEvents(@NotNull Object handler,@Nullable BooleanSupplier validator) {
+        public void registerEvents(@NotNull Object handler,@Nullable BooleanSupplier validator)
+                throws EventRegistrationException {
             for (EventCallback eventCallback : this.getEventCallbacks(handler, validator)) {
                 this.registerEventCallback(eventCallback);
             }
@@ -338,7 +428,9 @@ public abstract class FoxEvents {
         /**
          * Unregister event handlers that are owned by the instance
          *
+         * @param classLoader to unregister events from.
          * @param instance to unregister events from.
+         * @return if any event has been unregistered
          * @since 1.1.0
          */
         public static boolean unregisterEventsForClassLoaderUnsafe(

@@ -7,7 +7,6 @@ import org.jetbrains.annotations.Nullable;
 import java.lang.invoke.MethodHandle;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
-import java.util.function.Predicate;
 
 /**
  * Represent a method with {@link EventHandler} registered via a {@link #holder}
@@ -15,7 +14,7 @@ import java.util.function.Predicate;
 public final class EventCallback {
     public final EventHolder<?> eventHolder;
     public final Object holder;
-    public final MethodHandle eventCallback;
+    final MethodHandle eventCallback;
     public final boolean ignoreCancelled;
     public final int priority;
     public final BooleanSupplier validator;
@@ -30,47 +29,47 @@ public final class EventCallback {
         this.validator = validator;
     }
 
+    /**
+     * @param validator the validator to this event callback
+     * @return the new event callback using the new validator
+     * @since 1.0.0
+     */
     @Contract(pure = true)
     public @NotNull EventCallback withValidator(@Nullable BooleanSupplier validator) {
         return new EventCallback(this.eventHolder, holder,
                 this.eventCallback, this.ignoreCancelled, this.priority, validator);
     }
 
+    /**
+     * @return if the current EventCallback is invalid according to the validator
+     * @since 1.0.0
+     */
     public boolean isInvalid() {
         return this.validator != null && !this.validator.getAsBoolean();
     }
 
-    @Override
-    public boolean equals(Object object) {
-        if (this == object) return true;
-        if (object == null || getClass() != object.getClass()) return false;
-
-        EventCallback that = (EventCallback) object;
-
-        if (ignoreCancelled != that.ignoreCancelled) return false;
-        if (priority != that.priority) return false;
-        if (!eventHolder.equals(that.eventHolder)) return false;
-        if (!Objects.equals(holder, that.holder)) return false;
-        return eventCallback.equals(that.eventCallback);
+    /**
+     * @return if the current EventCallback is registered
+     * @since 1.2.0
+     */
+    public boolean isRegistered() {
+        return this.eventHolder.isEventCallbackRegistered(this);
     }
 
-    @Override
-    public int hashCode() {
-        int result = eventHolder.hashCode();
-        result = 31 * result + (holder != null ? holder.hashCode() : 0);
-        result = 31 * result + eventCallback.hashCode();
-        result = 31 * result + (ignoreCancelled ? 1 : 0);
-        result = 31 * result + priority;
-        return result;
+    /**
+     * Call an event for this event callback only
+     * @param event to dispatch
+     * @since 1.2.0
+     */
+    public void callForEvent(@NotNull Event event) {
+        Objects.requireNonNull(event, "event == null");
+        this.eventHolder.getEvent().cast(event);
+        this.callForEventRaw(event);
     }
 
-    void callForEvent(@NotNull Event event) {
+    void callForEventRaw(@NotNull Event event) {
         try {
-            if (this.holder != null) {
-                this.eventCallback.invoke(this.holder, event);
-            } else {
-                this.eventCallback.invoke(event);
-            }
+            this.eventCallback.invoke(event);
         } catch (Throwable t) {
             FoxEvents.getFoxEventsSoft().onEventError(event, this, t);
         }

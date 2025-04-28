@@ -2,7 +2,6 @@ package com.fox2code.foxevents.tests;
 
 import com.fox2code.foxevents.EventHandler;
 import com.fox2code.foxevents.EventHolder;
-import com.fox2code.foxevents.FoxEvents;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.opentest4j.TestSkippedException;
@@ -19,11 +18,11 @@ public class TestEvents {
     private static boolean basicStatic = false;
 
     static {
-        FoxEvents.getFoxEvents().registerEvents(TestEvents.class);
+        TextFoxEvents.INSTANCE.registerEvents(TestEvents.class);
     }
 
     public TestEvents() {
-        FoxEvents.getFoxEvents().registerEvents(this);
+        TextFoxEvents.INSTANCE.registerEvents(this);
         if (BASIC_EVENT_HOLDER.isEmpty()) {
             throw new TestSkippedException("Event registration failed");
         }
@@ -136,23 +135,27 @@ public class TestEvents {
 
     @EventHandler
     public void onBasicEvent(BasicEvent basicEvent) {
+        Assertions.assertNotNull(basicEvent, "basicEvent is null");
         this.basic = true;
         this.basicCallCount++;
     }
 
     @EventHandler
     public void onBasicDelegateEvent(BasicDelegateEvent basicDelegateEvent) {
+        Assertions.assertNotNull(basicDelegateEvent, "basicDelegateEvent is null");
         this.delegate = true;
     }
 
 
     @EventHandler
     public void onBasicSingletonEvent(BasicSecondaryEvent basicSecondaryEvent) {
+        Assertions.assertNotNull(basicSecondaryEvent, "basicSecondaryEvent is null");
         this.secondary = true;
     }
 
     @EventHandler
     public void onCancellableSingletonEvent(CancellableEvent cancellableEvent) {
+        Assertions.assertNotNull(cancellableEvent, "cancellableEvent is null");
         this.cancellable = true;
         if (this.shouldCancelCancellable) {
             cancellableEvent.setCancelled(true);
@@ -161,12 +164,14 @@ public class TestEvents {
 
     @EventHandler(ignoreCancelled = true, priority = 999)
     public void onCancellableSingletonEventIC(CancellableEvent cancellableEvent) {
+        Assertions.assertNotNull(cancellableEvent, "cancellableEvent is null");
         this.cancellableIgnoreCancelled = true;
         this.isCancellableCancelled = cancellableEvent.isCancelled();
     }
 
     @EventHandler
     public static void onBasicEventStatic(BasicEvent basicEvent) {
+        Assertions.assertNotNull(basicEvent, "basicEvent is null");
         basicStatic = true;
     }
 }
