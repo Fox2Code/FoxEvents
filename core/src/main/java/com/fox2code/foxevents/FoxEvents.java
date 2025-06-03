@@ -1,5 +1,6 @@
 package com.fox2code.foxevents;
 
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -56,7 +57,7 @@ public abstract class FoxEvents {
     public static @NotNull FoxEvents getFoxEvents() {
         FoxEvents foxEvents = FoxEvents.foxEvents;
         if (foxEvents == null) {
-            foxEvents = FoxEventsImpl.INSTANCE;
+            foxEvents = FoxEventsImpl.DEFAULT_IMPL;
             FoxEvents.foxEvents = foxEvents;
         }
         return foxEvents;
@@ -74,7 +75,7 @@ public abstract class FoxEvents {
     public static @NotNull FoxEvents getFoxEventsSoft() {
         FoxEvents foxEvents = FoxEvents.foxEvents;
         return foxEvents != null ? foxEvents :
-                FoxEventsImpl.INSTANCE;
+                FoxEventsImpl.DEFAULT_IMPL;
     }
 
     protected final void ensureInstanceAccess() {
@@ -96,6 +97,7 @@ public abstract class FoxEvents {
     }
 
     /**
+     * Make an event callback, with a stable ABI across versions
      * @param eventHolder the event holder
      * @param holder the instance holder
      * @param eventCallback the event callback
@@ -103,6 +105,7 @@ public abstract class FoxEvents {
      * @param priority the priority of the event
      * @param validator the validator of the event
      * @return the new {@link EventCallback}
+     * @since 1.0.0
      */
     @Contract(pure = true)
     protected final @NotNull EventCallback makeEventCallback(
@@ -115,6 +118,27 @@ public abstract class FoxEvents {
             // Ensure ABI compat with 1.1.0
             eventCallback = eventCallback.bindTo(holder);
         }
+        return new EventCallback(eventHolder, holder, eventCallback,
+                ignoreCancelled, priority, validator);
+    }
+
+    /**
+     * Make an event callback without ensuring version compatibility.
+     * @param eventHolder the event holder
+     * @param holder the instance holder
+     * @param eventCallback the event callback
+     * @param ignoreCancelled if the handler should be called even if the event is cancelled
+     * @param priority the priority of the event
+     * @param validator the validator of the event
+     * @return the new {@link EventCallback}
+     * @since 1.3.0
+     */
+    @ApiStatus.Internal
+    @Contract(pure = true)
+    protected final @NotNull EventCallback makeEventCallbackRaw(
+            @NotNull EventHolder<?> eventHolder,@Nullable Object holder,@NotNull MethodHandle eventCallback,
+            boolean ignoreCancelled, int priority,@Nullable BooleanSupplier validator) {
+        this.ensureInstanceAccess();
         return new EventCallback(eventHolder, holder, eventCallback,
                 ignoreCancelled, priority, validator);
     }
@@ -176,6 +200,7 @@ public abstract class FoxEvents {
     protected final @NotNull ArrayList<EventCallback> getEventCallbacks(
             @NotNull Object instance, @Nullable BooleanSupplier validator,
             boolean ignoreInvalid, @Nullable MethodHandles.Lookup lookup) throws EventRegistrationException {
+        this.ensureInstanceAccess();
         ArrayList<EventCallback> eventCallbacks = new ArrayList<>();
         boolean isStatic = instance instanceof Class;
         Class<?> handlerClass = isStatic ? (Class<?>) instance : instance.getClass();
@@ -326,40 +351,6 @@ public abstract class FoxEvents {
          */
         @Contract(pure = true)
         IdentityHashMap<Class<? extends Event>, EventHolder<?>> getFoxEventHolderReferences();
-    }
-
-    /**
-     * Default implementation of {@link FoxEvents}
-     * @since 1.0.0
-     */
-    static final class FoxEventsImpl extends FoxEvents {
-        static final FoxEventsImpl INSTANCE = new FoxEventsImpl();
-
-        private FoxEventsImpl() {}
-
-        @Override
-        public void registerEvents(@NotNull Object handler) throws EventRegistrationException {
-            for (EventCallback eventCallback : this.getEventCallbacks(handler)) {
-                this.registerEventCallback(eventCallback);
-            }
-        }
-
-        @Override
-        public void registerEvents(@NotNull Object handler,@Nullable BooleanSupplier validator)
-                throws EventRegistrationException {
-            for (EventCallback eventCallback : this.getEventCallbacks(handler, validator)) {
-                this.registerEventCallback(eventCallback);
-            }
-        }
-
-        @Override
-        public void unregisterEvents(@NotNull Object handler) {
-            if (handler.getClass().getClassLoader() != FoxEvents.class.getClassLoader()) {
-                // Cross class loader unregister is a bit iffy, but implementation can always be overridden.
-                throw new IllegalArgumentException("Handler doesn't use same class loader as FoxEvents");
-            }
-            this.unregisterEventsForClassLoader(FoxEvents.class.getClassLoader(), handler);
-        }
     }
 
     /**

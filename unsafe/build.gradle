@@ -1,4 +1,6 @@
 dependencies {
     compileOnly project["jetbrains-annotation"] as String
     testCompileOnly project["jetbrains-annotation"] as String
+    api(project["unsafe-accessor"] as String)
+    api(project(":core"))
 }

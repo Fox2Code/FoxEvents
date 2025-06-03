@@ -1,9 +1,36 @@
+configurations {
+    apiInclude
+    api.extendsFrom(apiInclude)
+}
+
 dependencies {
-    api(project(":core"))
+    compileOnly project["jetbrains-annotation"] as String
+    testCompileOnly project["jetbrains-annotation"] as String
+    apiInclude(project(":core"))
+    apiInclude(project(":unsafe"))
 }
 
 jar {
     manifest {
         attributes 'Main-Class': 'com.fox2code.foxevents.benchmark.Main'
     }
+}
+
+tasks.register("farJar", org.gradle.jvm.tasks.Jar).configure {
+    from sourceSets.main.output
+    from "../LICENSE"
+    archiveClassifier.set("fat")
+    manifest {
+        attributes 'Main-Class': 'com.fox2code.foxevents.benchmark.Main'
+    }
+}
+
+afterEvaluate {
+    farJar {
+        from(configurations.apiInclude.collect { it.isDirectory() ? it : zipTree(it) }) {
+            exclude("LICENSE")
+        }
+    }
+
+    assemble.dependsOn(farJar)
 }

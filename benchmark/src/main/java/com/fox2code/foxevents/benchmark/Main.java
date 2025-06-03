@@ -1,7 +1,20 @@
 package com.fox2code.foxevents.benchmark;
 
+import com.fox2code.foxevents.FoxEvents;
+
 public final class Main {
+    static {
+        FoxEvents.setFoxEvents(BenchmarkFoxEventsImpl.INSTANCE);
+    }
+
     public static void main(String[] args) {
+        if (args.length >= 1 && "unsafe".equals(args[0])) {
+            BenchmarkFoxEventsImpl.INSTANCE.setUnsafeMode(true);
+            System.out.println("Running unsafe FoxEvents benchmark");
+        } else {
+            BenchmarkFoxEventsImpl.INSTANCE.setUnsafeMode(false);
+            System.out.println("Running normal FoxEvents benchmark");
+        }
         FoxEventsBenchmark foxEventsBenchmark = new FoxEventsBenchmark();
         System.out.println("Running warm up");
         foxEventsBenchmark.runBenchmark();
@@ -17,13 +30,16 @@ public final class Main {
         BenchmarkResults benchmarkResults = new BenchmarkResults();
         System.out.println("Executing benchmark for about 5seconds");
         int count = 32;
+        int runs = 0;
         long millisLine = System.currentTimeMillis() + 5000L;
         while (count-->0 || (millisLine - System.currentTimeMillis()) > 0) {
             runBenchmarks(foxEventsBenchmark, benchmarkResults);
             if (count == -1) count = 0;
+            runs++;
         }
         System.out.println("Benchmark results: " + nsToMsStr(benchmarkResults.nsBenchmark2) + " | " +
                 nsToMsStr(benchmarkResults.nsBenchmarkSme2) + " | " + nsToMsStr(benchmarkResults.nsBenchmarkOpt2));
+        System.out.println("Executed runs: " + runs);
     }
 
     private static void runBenchmarks(FoxEventsBenchmark foxEventsBenchmark, BenchmarkResults benchmarkResults) {
@@ -39,7 +55,7 @@ public final class Main {
         return (nanos / 1000000D) + "ms";
     }
 
-    static class BenchmarkResults {
+    static final class BenchmarkResults {
         long nsBenchmark1 = Long.MAX_VALUE;
         long nsBenchmark2 = Long.MAX_VALUE;
         long nsBenchmarkSme1 = Long.MAX_VALUE;

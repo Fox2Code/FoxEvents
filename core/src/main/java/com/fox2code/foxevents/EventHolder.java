@@ -10,6 +10,7 @@ import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.logging.Level;
 
 /**
  * @param <T> event type
@@ -26,6 +27,7 @@ public final class EventHolder<T extends Event> {
     private static final Function<Class<? extends Event>, EventHolder<?>>
             eventHolderProvider = EventHolder::new;
     private static final boolean ignoreMemoryLeaks = Boolean.getBoolean("foxevents.ignore-memory-leaks");
+    private static final boolean debug = Boolean.getBoolean("foxevents.debug");
     private static final HashSet<String> printedClassLoaderMemoryLeakIssues = new HashSet<>();
     private static final ClassLoader selfClassLoader = EventHolder.class.getClassLoader();
     private static final IdentityHashMap<Class<? extends Event>, EventHolder<?>>
@@ -109,7 +111,9 @@ public final class EventHolder<T extends Event> {
     public static void forEachEventHolder(@Nullable ClassLoader classLoader,@NotNull Consumer<EventHolder<?>> action) {
         IdentityHashMap<Class<? extends Event>, EventHolder<?>> localEventHoldersCache;
         if (classLoader == null) classLoader = EventHolder.class.getClassLoader();
-        if (classLoader instanceof FoxEvents.FoxEventsClassLoader) {
+        if (classLoader == selfClassLoader) {
+            localEventHoldersCache = selfClassLoaderMap;
+        } else if (classLoader instanceof FoxEvents.FoxEventsClassLoader) {
             localEventHoldersCache = ((FoxEvents.FoxEventsClassLoader) classLoader).getFoxEventHolderReferences();
         } else {
             localEventHoldersCache = eventHoldersCache.get(classLoader);
@@ -127,7 +131,8 @@ public final class EventHolder<T extends Event> {
     private final String eventName;
     private final int eventModifiers;
     private final boolean cancellable;
-    private int validationCount;
+    private volatile int validationCount;
+    private volatile RuntimeException debugBakeException;
 
     @SuppressWarnings("unchecked")
     private EventHolder(Class<T> event) {
@@ -239,7 +244,26 @@ public final class EventHolder<T extends Event> {
         int validationModCountCache = validationModCount;
         if (this.validationCount == validationModCountCache &&
                 (bakedCallbacks = this.bakedCallbacks) != null) {
-            return bakedCallbacks;
+            // This is an obscure bug I cannot solve due to lack of info.
+            if (bakedCallbacks.length == 0 && !this.isEmpty()) {
+                synchronized (this.eventCallbacks) {
+                    this.validationCount--; // <- Force refresh cache
+                }
+                FoxEvents.LOGGER.log(Level.WARNING, "", new IllegalStateException(
+                        "FoxEvents encountered an invalid state for " + this.getEventName()));
+                if (debug) {
+                    if (this.debugBakeException != null) {
+                        FoxEvents.LOGGER.log(Level.WARNING, "", this.debugBakeException);
+                    } else {
+                        FoxEvents.LOGGER.log(Level.WARNING, "A bake never happened.");
+                    }
+                } else {
+                    FoxEvents.LOGGER.log(Level.WARNING,
+                            "Please use -Dfoxevents.debug=true to get more dioagnostic data.");
+                }
+            } else {
+                return bakedCallbacks;
+            }
         }
         synchronized (this.eventCallbacks) {
             bakedCallbacks = this.bakedCallbacks;
@@ -259,6 +283,12 @@ public final class EventHolder<T extends Event> {
                         eventCallbacks.toArray(EMPTY_EVENT_CALLBACKS);
                 this.bakedCallbacksSkipOnCancelled =
                         eventCallbacks.stream().noneMatch(pIgnoreCancelled);
+            }
+            if (debug) {
+                this.debugBakeException = new RuntimeException(
+                        "Last bake got " + bakedCallbacks.length + (this.isEmpty() ?
+                                " and was not empty at the end of the bake" :
+                                " and was an empty handler at the end of the bake"));
             }
         }
         return bakedCallbacks;

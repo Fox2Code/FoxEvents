@@ -1,4 +1,5 @@
 rootProject.name = 'FoxEvents'
 include 'core'
 include 'benchmark'
+include 'unsafe'
 
