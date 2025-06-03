@@ -132,7 +132,8 @@ public final class EventHolder<T extends Event> {
     private final int eventModifiers;
     private final boolean cancellable;
     private volatile int validationCount;
-    private volatile RuntimeException debugBakeException;
+    private volatile RuntimeException debugBake;
+    private volatile RuntimeException debugInvalidate;
 
     @SuppressWarnings("unchecked")
     private EventHolder(Class<T> event) {
@@ -252,10 +253,15 @@ public final class EventHolder<T extends Event> {
                 FoxEvents.LOGGER.log(Level.WARNING, "", new IllegalStateException(
                         "FoxEvents encountered an invalid state for " + this.getEventName()));
                 if (debug) {
-                    if (this.debugBakeException != null) {
-                        FoxEvents.LOGGER.log(Level.WARNING, "", this.debugBakeException);
+                    if (this.debugBake != null) {
+                        FoxEvents.LOGGER.log(Level.WARNING, "", this.debugBake);
                     } else {
                         FoxEvents.LOGGER.log(Level.WARNING, "A bake never happened.");
+                    }
+                    if (this.debugInvalidate != null) {
+                        FoxEvents.LOGGER.log(Level.WARNING, "", this.debugBake);
+                    } else {
+                        FoxEvents.LOGGER.log(Level.WARNING, "An invalidation never happened.");
                     }
                 } else {
                     FoxEvents.LOGGER.log(Level.WARNING,
@@ -285,7 +291,7 @@ public final class EventHolder<T extends Event> {
                         eventCallbacks.stream().noneMatch(pIgnoreCancelled);
             }
             if (debug) {
-                this.debugBakeException = new RuntimeException(
+                this.debugBake = new RuntimeException(
                         "Last bake got " + bakedCallbacks.length + (this.isEmpty() ?
                                 " and was not empty at the end of the bake" :
                                 " and was an empty handler at the end of the bake"));
@@ -333,6 +339,9 @@ public final class EventHolder<T extends Event> {
             if (!this.eventCallbacks.contains(eventCallback)) {
                 added = this.eventCallbacks.add(eventCallback);
                 this.bakedCallbacks = null;
+                if (debug) {
+                    this.debugInvalidate = new RuntimeException("Was empty: " + this.isEmpty());
+                }
             }
         }
         if (this.delegatedChilds != null && added) {
@@ -351,6 +360,9 @@ public final class EventHolder<T extends Event> {
             if (!this.eventCallbacks.contains(eventCallback)) {
                 removed = this.eventCallbacks.remove(eventCallback);
                 this.bakedCallbacks = null;
+                if (debug) {
+                    this.debugInvalidate = new RuntimeException("Was empty: " + this.isEmpty());
+                }
             }
         }
         if (this.delegatedChilds != null && removed) {
@@ -367,6 +379,10 @@ public final class EventHolder<T extends Event> {
                     eventCallback -> eventCallback.holder == instance);
         }
         if (unregistered) {
+            this.bakedCallbacks = null;
+            if (debug) {
+                this.debugInvalidate = new RuntimeException("Was empty: " + this.isEmpty());
+            }
             this.markChildsDirty();
         }
         return unregistered;
@@ -385,6 +401,10 @@ public final class EventHolder<T extends Event> {
             for (EventHolder<?> eventHolder : delegatedChilds.keySet()) {
                 synchronized (eventHolder.eventCallbacks) {
                     eventHolder.bakedCallbacks = null;
+                    if (debug) {
+                        eventHolder.debugInvalidate = new RuntimeException("From: " + this.getEventName() +
+                                (eventHolder.isEmpty() ? " and was empty" : "and wasn't empty"));
+                    }
                 }
                 eventHolder.markChildsDirty();
             }
