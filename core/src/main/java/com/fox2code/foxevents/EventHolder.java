@@ -27,7 +27,6 @@ public final class EventHolder<T extends Event> {
     private static final Function<Class<? extends Event>, EventHolder<?>>
             eventHolderProvider = EventHolder::new;
     private static final boolean ignoreMemoryLeaks = Boolean.getBoolean("foxevents.ignore-memory-leaks");
-    private static final boolean debug = Boolean.getBoolean("foxevents.debug");
     private static final HashSet<String> printedClassLoaderMemoryLeakIssues = new HashSet<>();
     private static final ClassLoader selfClassLoader = EventHolder.class.getClassLoader();
     private static final IdentityHashMap<Class<? extends Event>, EventHolder<?>>
@@ -132,8 +131,6 @@ public final class EventHolder<T extends Event> {
     private final int eventModifiers;
     private final boolean cancellable;
     private volatile int validationCount;
-    private volatile RuntimeException debugBake;
-    private volatile RuntimeException debugInvalidate;
 
     @SuppressWarnings("unchecked")
     private EventHolder(Class<T> event) {
@@ -142,10 +139,17 @@ public final class EventHolder<T extends Event> {
         this.eventModifiers = event.getModifiers();
         boolean cancellable = Event.Cancellable.class.isAssignableFrom(event);
         boolean delegate = event.getDeclaredAnnotation(Event.DelegateEvent.class) != null;
-        if (delegate && event.getClassLoader() != event.getSuperclass().getClassLoader()) // Avoid memory-leaks
+        if (delegate && event.getClassLoader() != event.getSuperclass().getClassLoader() && !ignoreMemoryLeaks) {
             throw new IllegalStateException("Delegate have a super class with a different class loader than it's on");
+        }
         this.delegate = delegate ? (EventHolder<? super T>) getHolderFromEventRaw(event.getSuperclass()) : null;
-        if (this.delegate != null) this.delegate.getDelegatedChilds().put(this, null);
+        if (this.delegate != null) {
+            this.delegate.getDelegatedChilds().put(this, null);
+            // Force early dirty callbacks if delegate isn't empty
+            if (!this.delegate.isEmpty()) {
+                this.bakedCallbacks = null;
+            }
+        }
         this.cancellable = cancellable;
     }
 
@@ -245,31 +249,7 @@ public final class EventHolder<T extends Event> {
         int validationModCountCache = validationModCount;
         if (this.validationCount == validationModCountCache &&
                 (bakedCallbacks = this.bakedCallbacks) != null) {
-            // This is an obscure bug I cannot solve due to lack of info.
-            if (bakedCallbacks.length == 0 && !this.isEmpty()) {
-                synchronized (this.eventCallbacks) {
-                    this.validationCount--; // <- Force refresh cache
-                }
-                FoxEvents.LOGGER.log(Level.WARNING, "", new IllegalStateException(
-                        "FoxEvents encountered an invalid state for " + this.getEventName()));
-                if (debug) {
-                    if (this.debugBake != null) {
-                        FoxEvents.LOGGER.log(Level.WARNING, "", this.debugBake);
-                    } else {
-                        FoxEvents.LOGGER.log(Level.WARNING, "A bake never happened.");
-                    }
-                    if (this.debugInvalidate != null) {
-                        FoxEvents.LOGGER.log(Level.WARNING, "", this.debugBake);
-                    } else {
-                        FoxEvents.LOGGER.log(Level.WARNING, "An invalidation never happened.");
-                    }
-                } else {
-                    FoxEvents.LOGGER.log(Level.WARNING,
-                            "Please use -Dfoxevents.debug=true to get more dioagnostic data.");
-                }
-            } else {
-                return bakedCallbacks;
-            }
+            return bakedCallbacks;
         }
         synchronized (this.eventCallbacks) {
             bakedCallbacks = this.bakedCallbacks;
@@ -289,12 +269,6 @@ public final class EventHolder<T extends Event> {
                         eventCallbacks.toArray(EMPTY_EVENT_CALLBACKS);
                 this.bakedCallbacksSkipOnCancelled =
                         eventCallbacks.stream().noneMatch(pIgnoreCancelled);
-            }
-            if (debug) {
-                this.debugBake = new RuntimeException(
-                        "Last bake got " + bakedCallbacks.length + (this.isEmpty() ?
-                                " and was not empty at the end of the bake" :
-                                " and was an empty handler at the end of the bake"));
             }
         }
         return bakedCallbacks;
@@ -339,9 +313,6 @@ public final class EventHolder<T extends Event> {
             if (!this.eventCallbacks.contains(eventCallback)) {
                 added = this.eventCallbacks.add(eventCallback);
                 this.bakedCallbacks = null;
-                if (debug) {
-                    this.debugInvalidate = new RuntimeException("Was empty: " + this.isEmpty());
-                }
             }
         }
         if (this.delegatedChilds != null && added) {
@@ -360,9 +331,6 @@ public final class EventHolder<T extends Event> {
             if (!this.eventCallbacks.contains(eventCallback)) {
                 removed = this.eventCallbacks.remove(eventCallback);
                 this.bakedCallbacks = null;
-                if (debug) {
-                    this.debugInvalidate = new RuntimeException("Was empty: " + this.isEmpty());
-                }
             }
         }
         if (this.delegatedChilds != null && removed) {
@@ -380,9 +348,6 @@ public final class EventHolder<T extends Event> {
         }
         if (unregistered) {
             this.bakedCallbacks = null;
-            if (debug) {
-                this.debugInvalidate = new RuntimeException("Was empty: " + this.isEmpty());
-            }
             this.markChildsDirty();
         }
         return unregistered;
@@ -401,10 +366,6 @@ public final class EventHolder<T extends Event> {
             for (EventHolder<?> eventHolder : delegatedChilds.keySet()) {
                 synchronized (eventHolder.eventCallbacks) {
                     eventHolder.bakedCallbacks = null;
-                    if (debug) {
-                        eventHolder.debugInvalidate = new RuntimeException("From: " + this.getEventName() +
-                                (eventHolder.isEmpty() ? " and was empty" : "and wasn't empty"));
-                    }
                 }
                 eventHolder.markChildsDirty();
             }
