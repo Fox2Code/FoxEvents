@@ -145,7 +145,7 @@ public class TestEvents {
         final int[] counter = new int[]{0};
         EventHolder.forEachEventHolder(eventHolder -> counter[0]++);
         // This is good enough for now
-        Assertions.assertEquals(4, counter[0]);
+        Assertions.assertEquals(7, counter[0]);
     }
 
     @EventHandler
